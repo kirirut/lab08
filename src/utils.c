@@ -1,4 +1,3 @@
-// utils.c
 #define _GNU_SOURCE
 #include "utils.h"
 #include <stdio.h>
@@ -31,11 +30,36 @@ void log_event(const char *event) {
 int is_inside_root(const char *root, const char *path) {
     char abs_root[PATH_MAX];
     char abs_path[PATH_MAX];
-    
-    if (!realpath(root, abs_root) || !realpath(path, abs_path)) {
+
+    if (!realpath(root, abs_root)) {
+        perror("realpath root");
         return 0;
     }
-    
+    char *path_copy = strdup(path);
+    if (!path_copy) {
+        perror("strdup");
+        return 0;
+    }
+
+    char *last_slash = strrchr(path_copy, '/');
+    int exists = 0;
+    if (last_slash && realpath(path_copy, abs_path)) {
+        exists = 1;
+    } else if (last_slash) {
+        *last_slash = '\0';
+        if (realpath(path_copy, abs_path)) {
+            strcat(abs_path, "/");
+            strcat(abs_path, last_slash + 1);
+            exists = 1;
+        }
+    }
+
+    free(path_copy);
+
+    if (!exists) {
+        return 0;
+    }
+
     size_t root_len = strlen(abs_root);
     if (strncmp(abs_root, abs_path, root_len) == 0) {
         if (abs_path[root_len] == '\0' || abs_path[root_len] == '/') {

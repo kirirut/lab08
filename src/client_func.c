@@ -6,7 +6,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 4096
 
 int connect_to_server(const char *ip, int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -37,33 +37,67 @@ int connect_to_server(const char *ip, int port) {
 
 void run_client_loop(int sock) {
     char buffer[BUFFER_SIZE];
+    char input[BUFFER_SIZE];
 
     while (1) {
         printf("> ");
-        if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+        fflush(stdout);
+
+        if (fgets(input, sizeof(input), stdin) == NULL) {
+            perror("fgets");
             break;
         }
 
-        buffer[strcspn(buffer, "\n")] = '\0';
+        input[strcspn(input, "\n")] = '\0';
 
-        if (strcmp(buffer, "quit") == 0) {
+        if (strlen(input) == 0) {
+            continue;
+        }
+
+        if (strcmp(input, "quit") == 0) {
             break;
         }
 
-        if (send(sock, buffer, strlen(buffer), 0) < 0) {
+        size_t input_len = strlen(input);
+        if (input_len >= BUFFER_SIZE - 1) {
+            printf("Command too long\n");
+            continue;
+        }
+        input[input_len] = '\n';
+        input[input_len + 1] = '\0';
+
+        if (send(sock, input, input_len + 1, 0) < 0) {
             perror("send");
             break;
         }
-        memset(buffer, 0, sizeof(buffer));
 
-        ssize_t bytes_received = recv(sock, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_received < 0) {
-            perror("recv");
-            break;
+        memset(buffer, 0, sizeof(buffer));
+        ssize_t total_bytes = 0;
+
+        while (1) {
+            ssize_t bytes_received = recv(sock, buffer + total_bytes, sizeof(buffer) - total_bytes - 1, 0);
+            if (bytes_received <= 0) {
+                if (bytes_received == 0) {
+                    printf("Server closed connection.\n");
+                } else {
+                    perror("recv");
+                }
+                close(sock);
+                return;
+            }
+
+            total_bytes += bytes_received;
+            buffer[total_bytes] = '\0';
+
+            // Check if we've received a complete response
+            if (total_bytes > 0 && (buffer[total_bytes - 1] == '\n' || total_bytes >= sizeof(buffer) - 1)) {
+                break;
+            }
         }
 
-        buffer[bytes_received] = '\0';
-        printf("%s\n", buffer);
+        // Print server response
+        printf("%s", buffer);
+        fflush(stdout);
     }
 
     close(sock);

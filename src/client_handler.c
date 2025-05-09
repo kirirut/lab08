@@ -1,4 +1,3 @@
-// client_handler.c
 #include "client_handler.h"
 #include "utils.h"
 #include <stdio.h>
@@ -16,7 +15,7 @@
 static volatile int active_clients = 0;
 
 void handle_client(int client_sock, const char *root_dir) {
-    char buffer[1024];
+    char buffer[4096];
     ssize_t bytes_read;
 
     if (chdir(root_dir) != 0) {
@@ -36,6 +35,7 @@ void handle_client(int client_sock, const char *root_dir) {
 
         if (strlen(buffer) == 0) {
             write(client_sock, "EMPTY COMMAND\n", 14);
+            log_event("Received empty command");
             continue;
         }
 
@@ -63,7 +63,8 @@ void handle_client(int client_sock, const char *root_dir) {
             getcwd(current_dir, sizeof(current_dir));
             char info[512];
             snprintf(info, sizeof(info),
-                     "PID: %d\nHost: %s\nOS: %s\nCurrent Dir: %s\n",
+                     "Welcome to the File Server!\n"
+                     "PID: %d\nHost: %.64s\nOS: %.64s\nCurrent Dir: %.256s\n",
                      getpid(), uts.nodename, uts.sysname, current_dir);
             write(client_sock, info, strlen(info));
         } else if (strncmp(buffer, "CD ", 3) == 0) {
@@ -72,7 +73,21 @@ void handle_client(int client_sock, const char *root_dir) {
                 write(client_sock, "INVALID PATH\n", 13);
                 continue;
             }
-            snprintf(full_path, sizeof(full_path), "%s/%s", root_dir, path);
+            if (!getcwd(current_dir, sizeof(current_dir))) {
+                write(client_sock, "FAIL\n", 5);
+                continue;
+            }
+            size_t current_dir_len = strlen(current_dir);
+            size_t path_len = strlen(path);
+            if (current_dir_len + 1 + path_len >= sizeof(full_path)) {
+                write(client_sock, "PATH TOO LONG\n", 14);
+                continue;
+            }
+
+            full_path[0] = '\0';
+            strncat(full_path, current_dir, current_dir_len);
+            strncat(full_path, "/", 1);
+            strncat(full_path, path, path_len);
             if (realpath(full_path, current_dir) && is_inside_root(root_dir, current_dir)) {
                 if (chdir(current_dir) == 0) {
                     write(client_sock, "OK\n", 3);
