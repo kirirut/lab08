@@ -1,6 +1,6 @@
+// utils.c
 #define _GNU_SOURCE
 #include "utils.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +10,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <netinet/in.h>
-#include <signal.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 
@@ -32,9 +31,18 @@ void log_event(const char *event) {
 int is_inside_root(const char *root, const char *path) {
     char abs_root[PATH_MAX];
     char abs_path[PATH_MAX];
-    realpath(root, abs_root);
-    realpath(path, abs_path);
-    return strncmp(abs_root, abs_path, strlen(abs_root)) == 0;
+    
+    if (!realpath(root, abs_root) || !realpath(path, abs_path)) {
+        return 0;
+    }
+    
+    size_t root_len = strlen(abs_root);
+    if (strncmp(abs_root, abs_path, root_len) == 0) {
+        if (abs_path[root_len] == '\0' || abs_path[root_len] == '/') {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void print_server_ip() {

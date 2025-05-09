@@ -1,3 +1,4 @@
+// client_handler.c
 #include "client_handler.h"
 #include "utils.h"
 #include <stdio.h>
@@ -10,6 +11,9 @@
 #include <limits.h>
 #include <arpa/inet.h>
 #include <sys/utsname.h>
+#include <sys/stat.h>
+
+static volatile int active_clients = 0;
 
 void handle_client(int client_sock, const char *root_dir) {
     char buffer[1024];
@@ -21,16 +25,33 @@ void handle_client(int client_sock, const char *root_dir) {
         exit(EXIT_FAILURE);
     }
 
+    __sync_fetch_and_add(&active_clients, 1);
+
     char current_dir[PATH_MAX];
-    char full_path[PATH_MAX];  
+    char full_path[PATH_MAX];
 
     while ((bytes_read = read(client_sock, buffer, sizeof(buffer) - 1)) > 0) {
         buffer[bytes_read] = '\0';
-        buffer[strcspn(buffer, "\r\n")] = '\0';  
-    
-        log_event(buffer);  
-    
-        if (strncmp(buffer, "ECHO ", 5) == 0) {
+        buffer[strcspn(buffer, "\r\n")] = '\0';
+
+        if (strlen(buffer) == 0) {
+            write(client_sock, "EMPTY COMMAND\n", 14);
+            continue;
+        }
+
+        log_event(buffer);
+
+        if (strcmp(buffer, "HELP") == 0) {
+            const char *help_msg =
+                "Available commands:\n"
+                "ECHO <message> - Echo back the message\n"
+                "QUIT - Disconnect from server\n"
+                "INFO - Show server information\n"
+                "CD <path> - Change directory\n"
+                "LIST - List directory contents\n"
+                "HELP - Show this help message\n";
+            write(client_sock, help_msg, strlen(help_msg));
+        } else if (strncmp(buffer, "ECHO ", 5) == 0) {
             const char *msg = buffer + 5;
             write(client_sock, msg, strlen(msg));
             write(client_sock, "\n", 1);
@@ -47,6 +68,10 @@ void handle_client(int client_sock, const char *root_dir) {
             write(client_sock, info, strlen(info));
         } else if (strncmp(buffer, "CD ", 3) == 0) {
             char *path = buffer + 3;
+            if (path[0] == '\0') {
+                write(client_sock, "INVALID PATH\n", 13);
+                continue;
+            }
             snprintf(full_path, sizeof(full_path), "%s/%s", root_dir, path);
             if (realpath(full_path, current_dir) && is_inside_root(root_dir, current_dir)) {
                 if (chdir(current_dir) == 0) {
@@ -61,13 +86,24 @@ void handle_client(int client_sock, const char *root_dir) {
             DIR *dir = opendir(".");
             if (dir) {
                 struct dirent *entry;
+                char list_buffer[4096] = {0};
+                size_t offset = 0;
                 while ((entry = readdir(dir)) != NULL) {
                     if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
-                        write(client_sock, entry->d_name, strlen(entry->d_name));
-                        write(client_sock, "\n", 1);
+                        size_t len = strlen(entry->d_name);
+                        if (offset + len + 1 < sizeof(list_buffer)) {
+                            memcpy(list_buffer + offset, entry->d_name, len);
+                            list_buffer[offset + len] = '\n';
+                            offset += len + 1;
+                        }
                     }
                 }
                 closedir(dir);
+                if (offset > 0) {
+                    write(client_sock, list_buffer, offset);
+                } else {
+                    write(client_sock, "EMPTY\n", 6);
+                }
             } else {
                 write(client_sock, "FAIL\n", 5);
             }
@@ -78,5 +114,13 @@ void handle_client(int client_sock, const char *root_dir) {
 
     close(client_sock);
     log_event("Client disconnected");
+    __sync_fetch_and_sub(&active_clients, 1);
     exit(0);
+}
+
+void cleanup_clients() {
+    while (active_clients > 0) {
+        printf("Waiting for %d clients to disconnect...\n", active_clients);
+        sleep(1);
+    }
 }
